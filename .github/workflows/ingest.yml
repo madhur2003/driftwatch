@@ -1,0 +1,49 @@
+name: ingest
+
+on:
+  schedule:
+    # Every 6 hours (offset off the hour to avoid the top-of-hour stampede).
+    # EIA hourly data lags ~1h; a rolling window backfills any gaps.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: "Hours to look back when pulling demand"
+        default: "72"
+        required: false
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install .
+
+      - name: Ingest demand
+        env:
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          driftwatch ingest --lookback-hours "${{ github.event.inputs.lookback_hours || '72' }}"
+          driftwatch status
+
+      # For a portfolio demo, the refreshed SQLite file is uploaded as an
+      # artifact. For true cross-run persistence (so the dashboard sees a
+      # growing history), point DRIFTWATCH_DB_PATH at a hosted Postgres and
+      # drop this step.
+      - name: Upload database artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: driftwatch-db
+          path: data/driftwatch.db
+          if-no-files-found: warn
+          retention-days: 14

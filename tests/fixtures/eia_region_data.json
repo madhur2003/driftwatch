@@ -1,0 +1,37 @@
+{
+  "response": {
+    "total": "3",
+    "dateFormat": "YYYY-MM-DD\"T\"HH24",
+    "frequency": "hourly",
+    "description": "Hourly demand by balancing authority (UTC).",
+    "data": [
+      {
+        "period": "2024-06-01T00",
+        "respondent": "PJM",
+        "respondent-name": "PJM Interconnection, LLC",
+        "type": "D",
+        "type-name": "Demand",
+        "value": "85000",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2024-06-01T01",
+        "respondent": "PJM",
+        "respondent-name": "PJM Interconnection, LLC",
+        "type": "D",
+        "type-name": "Demand",
+        "value": "82000",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2024-06-01T02",
+        "respondent": "PJM",
+        "respondent-name": "PJM Interconnection, LLC",
+        "type": "D",
+        "type-name": "Demand",
+        "value": null,
+        "value-units": "megawatthours"
+      }
+    ]
+  }
+}
