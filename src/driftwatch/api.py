@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from . import __version__, db
+from . import drift as D
 from . import features as F
 from . import model as M
 from .config import Settings
@@ -59,6 +60,15 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     model_trained_at: str | None
+
+
+class DriftRequest(BaseModel):
+    respondent: str = "PJM"
+    data_type: str = "D"
+    window_hours: int = Field(168, ge=24, le=24 * 90, description="Recent window to score.")
+    error_window_hours: int = Field(
+        168, ge=24, le=24 * 90, description="Window for prediction-error monitoring."
+    )
 
 
 # ---- prediction plumbing -------------------------------------------------
@@ -113,7 +123,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.settings = settings
-        app.state.artifact = M.try_load(settings.model_path, settings.meta_path)
+        app.state.artifact = M.try_load(
+            settings.model_path, settings.meta_path, settings.reference_path
+        )
         if app.state.artifact is None:
             logger.warning(
                 "no model artifact at %s; /predict will 503 until one is trained",
@@ -156,6 +168,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=503, detail="no trained model available; train one first"
             )
         return _predict(request.app.state.settings, artifact, req)
+
+    @app.post("/drift")
+    def drift(req: DriftRequest, request: Request) -> dict:
+        settings = request.app.state.settings
+        artifact: M.Artifact | None = request.app.state.artifact
+        try:
+            report = D.evaluate(
+                settings,
+                artifact=artifact,
+                respondent=req.respondent,
+                data_type=req.data_type,
+                window_hours=req.window_hours,
+                error_window_hours=req.error_window_hours,
+            )
+        except D.DriftError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        with db.get_connection(settings.db_path) as conn:
+            D.store_report(conn, report)
+        return report.to_dict()
+
+    @app.get("/drift/history")
+    def drift_history(request: Request, respondent: str | None = None, limit: int = 20) -> dict:
+        settings = request.app.state.settings
+        with db.get_connection(settings.db_path) as conn:
+            rows = db.recent_drift_reports(conn, respondent=respondent, limit=limit)
+        return {
+            "reports": [
+                {
+                    "id": r["id"],
+                    "generated_at_utc": r["generated_at_utc"],
+                    "respondent": r["respondent"],
+                    "status": r["status"],
+                    "flagged": bool(r["flagged"]),
+                    "value_psi": r["value_psi"],
+                    "ks_statistic": r["ks_statistic"],
+                    "error_mae": r["error_mae"],
+                    "baseline_mae": r["baseline_mae"],
+                    "mae_ratio": r["mae_ratio"],
+                }
+                for r in rows
+            ]
+        }
 
     return app
 

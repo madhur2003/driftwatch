@@ -1,4 +1,7 @@
-"""Command-line entry point: `driftwatch ingest | status | init-db`."""
+"""Command-line entry point.
+
+Subcommands: `ingest | status | init-db | synth | train | predict | serve | drift`.
+"""
 
 from __future__ import annotations
 
@@ -139,12 +142,18 @@ def cmd_synth(args: argparse.Namespace, settings: Settings) -> int:
     from .synthetic import synthetic_records
 
     respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
-    records = synthetic_records(respondent=respondent, hours=args.days * 24, seed=args.seed)
+    records = synthetic_records(
+        respondent=respondent,
+        hours=args.days * 24,
+        seed=args.seed,
+        demand_multiplier=1.0 + args.shift,
+    )
     with db.get_connection(settings.db_path) as conn:
         written = db.upsert_records(conn, records)
+    shift_note = f", +{args.shift:.0%} level shift" if args.shift else ""
     print(
         f"Seeded {written} synthetic hourly rows for {respondent} "
-        f"({args.days} days) into {settings.db_path}"
+        f"({args.days} days{shift_note}) into {settings.db_path}"
     )
     return 0
 
@@ -153,6 +162,50 @@ def cmd_serve(args: argparse.Namespace, _settings: Settings) -> int:
     import uvicorn
 
     uvicorn.run("driftwatch.api:app", host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
+def cmd_drift(args: argparse.Namespace, settings: Settings) -> int:
+    from . import drift as dr
+
+    respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
+    data_type = (args.type or list(DEFAULT_DATA_TYPES))[0]
+    try:
+        report = dr.evaluate(
+            settings,
+            respondent=respondent,
+            data_type=data_type,
+            window_hours=args.window_hours,
+            error_window_hours=args.error_window_hours,
+        )
+    except dr.DriftError as exc:
+        logger.error("%s", exc)
+        return 1
+    with db.get_connection(settings.db_path) as conn:
+        dr.store_report(conn, report)
+
+    print(
+        f"Drift status: {report.status.upper()}  "
+        f"({report.respondent} {report.data_type}, n={report.n_current}, "
+        f"window {report.current_start_utc} .. {report.current_end_utc})"
+    )
+    for feat in report.features:
+        psi_txt = "n/a" if feat.psi != feat.psi else f"{feat.psi:.4f}"  # NaN-safe
+        ks_txt = (
+            "n/a" if feat.ks_statistic is None else f"{feat.ks_statistic:.4f} (p={feat.ks_pvalue})"
+        )
+        print(f"  input '{feat.feature}': PSI={psi_txt} [{feat.status}]  KS={ks_txt}")
+    err = report.error
+    if err.mae is not None:
+        print(
+            f"  error: recent MAE={err.mae:,.1f} vs baseline {err.baseline_mae:,.1f} "
+            f"(ratio {err.mae_ratio}) [{err.status}]  n={err.n}"
+        )
+    else:
+        print(f"  error: (insufficient recent actuals) [{err.status}]")
+
+    if args.fail_on_alert and report.status == dr.ALERT:
+        return 2
     return 0
 
 
@@ -235,6 +288,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--days", type=int, default=60, help="Days of history to generate. Default: 60."
     )
     p_synth.add_argument("--seed", type=int, default=0, help="RNG seed. Default: 0.")
+    p_synth.add_argument(
+        "--shift",
+        type=float,
+        default=0.0,
+        help="Fractional demand level shift to inject drift, e.g. 0.3 for +30%%. Default: 0.",
+    )
     p_synth.set_defaults(func=cmd_synth)
 
     p_serve = sub.add_parser("serve", help="Run the FastAPI service (uvicorn).", parents=[common])
@@ -242,6 +301,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int, default=8000, help="Bind port. Default: 8000.")
     p_serve.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev).")
     p_serve.set_defaults(func=cmd_serve)
+
+    p_drift = sub.add_parser(
+        "drift", help="Check for input drift and prediction-error decay.", parents=[common]
+    )
+    p_drift.add_argument("--respondent", action="append", help="Balancing authority. Default: PJM.")
+    p_drift.add_argument("--type", action="append", help="EIA data type. Default: D.")
+    p_drift.add_argument(
+        "--window-hours", type=int, default=168, help="Recent window to score. Default: 168 (7d)."
+    )
+    p_drift.add_argument(
+        "--error-window-hours",
+        type=int,
+        default=168,
+        help="Window for prediction-error monitoring. Default: 168 (7d).",
+    )
+    p_drift.add_argument(
+        "--fail-on-alert",
+        action="store_true",
+        help="Exit with code 2 when the status is ALERT (for cron/CI alerting).",
+    )
+    p_drift.set_defaults(func=cmd_drift)
 
     return parser
 

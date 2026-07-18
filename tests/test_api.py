@@ -75,3 +75,25 @@ def test_predict_unknown_respondent_returns_422(trained_settings):
     with TestClient(create_app(trained_settings)) as client:
         resp = client.post("/predict", json={"respondent": "NOPE", "horizon_hours": 3})
         assert resp.status_code == 422
+
+
+def test_drift_endpoint_reports_status_and_records_history(trained_settings):
+    with TestClient(create_app(trained_settings)) as client:
+        resp = client.post(
+            "/drift", json={"respondent": "PJM", "window_hours": 168, "error_window_hours": 168}
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] in ("ok", "warn", "alert")
+        assert body["features"][0]["feature"] == "value"
+
+        history = client.get("/drift/history")
+        assert history.status_code == 200
+        assert len(history.json()["reports"]) >= 1
+
+
+def test_drift_without_model_returns_503(tmp_path):
+    settings = _settings(tmp_path, model_path=tmp_path / "missing.joblib")
+    with TestClient(create_app(settings)) as client:
+        resp = client.post("/drift", json={"respondent": "PJM"})
+        assert resp.status_code == 503

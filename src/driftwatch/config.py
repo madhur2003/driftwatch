@@ -47,6 +47,11 @@ class Settings:
         """Sidecar JSON path holding the trained model's metadata."""
         return self.model_path.with_suffix(".json")
 
+    @property
+    def reference_path(self) -> Path:
+        """Sidecar JSON path holding the drift reference distribution."""
+        return self.model_path.parent / (self.model_path.stem + ".reference.json")
+
     @classmethod
     def from_env(cls) -> Settings:
         db_path = os.environ.get("DRIFTWATCH_DB_PATH")

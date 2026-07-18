@@ -53,10 +53,15 @@ class TrainingReport:
 class Artifact:
     estimator: Any
     metadata: dict[str, Any]
+    reference: dict[str, Any] | None = None
 
     @property
     def trained_at_utc(self) -> str | None:
         return self.metadata.get("trained_at_utc")
+
+
+def _default_reference_path(model_path: Path) -> Path:
+    return model_path.parent / (model_path.stem + ".reference.json")
 
 
 def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
@@ -136,29 +141,54 @@ def train(
         metrics["baseline_mae"],
         metrics["skill_vs_baseline"] * 100,
     )
-    return Artifact(estimator=estimator, metadata=asdict(report))
+
+    # Capture the drift reference (demand distribution the model was trained on)
+    # so Week 3's monitoring can compare future windows against it. Local import
+    # avoids a circular dependency (drift imports model).
+    from .drift import build_reference
+
+    reference = build_reference({"value": y_train.to_numpy(dtype=float)})
+    return Artifact(estimator=estimator, metadata=asdict(report), reference=reference)
 
 
-def save(artifact: Artifact, model_path: Path, meta_path: Path | None = None) -> None:
+def save(
+    artifact: Artifact,
+    model_path: Path,
+    meta_path: Path | None = None,
+    reference_path: Path | None = None,
+) -> None:
     meta_path = meta_path or model_path.with_suffix(".json")
+    reference_path = reference_path or _default_reference_path(model_path)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(artifact.estimator, model_path)
     meta_path.write_text(json.dumps(artifact.metadata, indent=2))
+    if artifact.reference is not None:
+        reference_path.write_text(json.dumps(artifact.reference))
 
 
-def load(model_path: Path, meta_path: Path | None = None) -> Artifact:
+def load(
+    model_path: Path,
+    meta_path: Path | None = None,
+    reference_path: Path | None = None,
+) -> Artifact:
     meta_path = meta_path or model_path.with_suffix(".json")
+    reference_path = reference_path or _default_reference_path(model_path)
     estimator = joblib.load(model_path)
     metadata = json.loads(meta_path.read_text())
-    return Artifact(estimator=estimator, metadata=metadata)
+    reference = json.loads(reference_path.read_text()) if reference_path.exists() else None
+    return Artifact(estimator=estimator, metadata=metadata, reference=reference)
 
 
-def try_load(model_path: Path, meta_path: Path | None = None) -> Artifact | None:
+def try_load(
+    model_path: Path,
+    meta_path: Path | None = None,
+    reference_path: Path | None = None,
+) -> Artifact | None:
     meta_path = meta_path or model_path.with_suffix(".json")
     if not model_path.exists() or not meta_path.exists():
         return None
     try:
-        return load(model_path, meta_path)
+        return load(model_path, meta_path, reference_path)
     except Exception as exc:  # corrupt/incompatible artifact — serve degrades gracefully
         logger.warning("could not load model artifact at %s: %s", model_path, exc)
         return None

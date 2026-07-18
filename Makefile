@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint fmt ingest status synth train predict serve docker-build docker-run clean
+.PHONY: help install dev test lint fmt ingest status synth train predict drift serve docker-build docker-run clean
 PY ?= python3
 
 # Run the CLI straight from source: no install step, always reflects your edits,
@@ -38,6 +38,9 @@ train:  ## Train the forecaster on stored demand
 
 predict:  ## Forecast the next 24h
 	$(RUN) predict --horizon 24
+
+drift:  ## Check for input drift and prediction-error decay
+	$(RUN) drift
 
 serve:  ## Run the FastAPI service on http://127.0.0.1:8000
 	$(RUN) serve

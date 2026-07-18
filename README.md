@@ -21,8 +21,10 @@ This is being built in weekly increments.
 - [x] **Week 1 — Ingestion.** Pull the live EIA feed on a schedule and store it
       cleanly and idempotently.
 - [x] **Week 2 — Forecast & serve.** Train a demand forecaster and serve it
-      behind FastAPI; containerize. ← *you are here*
-- [ ] Week 3 — Drift layer: PSI + KS tests on incoming features, plus error monitoring.
+      behind FastAPI; containerize.
+- [x] **Week 3 — Drift layer.** PSI + KS on the demand distribution and
+      prediction-error monitoring, with the threshold that raises the flag.
+      ← *you are here*
 - [ ] Week 4 — Monitoring dashboard: live predictions, recent error, drift status.
 - [ ] Week 5 — Deploy, then deliberately feed it shifted data to prove the flag fires.
 
@@ -37,8 +39,9 @@ src/driftwatch/
   features.py     calendar + lag features; one path for train and inference
   synthetic.py    realistic offline demand generator (demos + tests)
   model.py        train / evaluate / persist / predict (gradient boosting)
-  api.py          FastAPI service: /health, /model, /predict
-  cli.py          driftwatch ingest | status | init-db | synth | train | predict | serve
+  drift.py        PSI + KS distribution drift, prediction-error decay, flag
+  api.py          FastAPI service: /health, /model, /predict, /drift
+  cli.py          ingest | status | init-db | synth | train | predict | serve | drift
 ```
 
 Design choices worth noting:
@@ -59,6 +62,11 @@ Design choices worth noting:
 - **Honest evaluation.** The model is scored on a time-ordered hold-out (never
   a shuffled split) against a seasonal-naive "same hour yesterday" baseline, so
   its reported skill is real.
+- **Self-monitoring.** Training snapshots a drift *reference* (the demand
+  distribution it learned on). Each drift check scores a recent window against
+  it — PSI + KS for input shift, recent error vs. the training baseline for
+  decay — and raises `ok` / `warn` / `alert`. That flag is the whole point: the
+  system says when it is becoming untrustworthy instead of failing silently.
 
 ## Quickstart
 
@@ -122,15 +130,44 @@ curl -X POST localhost:8000/predict \
      -d '{"respondent":"PJM","horizon_hours":6}'
 ```
 
-| Endpoint         | Description                                             |
-| ---------------- | ------------------------------------------------------- |
-| `GET /health`    | Liveness + whether a model is loaded and when it trained |
-| `GET /model`     | Training metadata: metrics, baseline, features, window   |
-| `POST /predict`  | Forecast by `horizon_hours` (≤24) or explicit `periods`  |
+| Endpoint             | Description                                              |
+| -------------------- | ------------------------------------------------------- |
+| `GET /health`        | Liveness + whether a model is loaded and when it trained |
+| `GET /model`         | Training metadata: metrics, baseline, features, window   |
+| `POST /predict`      | Forecast by `horizon_hours` (≤24) or explicit `periods`  |
+| `POST /drift`        | Score a recent window for drift; records the result      |
+| `GET /drift/history` | Recent drift reports (the monitoring timeline)           |
 
-Training persists two files next to each other: `model.joblib` (the estimator)
-and `model.json` (metrics + metadata), under `models/` by default
-(`DRIFTWATCH_MODEL_PATH`).
+Training persists three files next to each other under `models/` by default
+(`DRIFTWATCH_MODEL_PATH`): `model.joblib` (the estimator), `model.json` (metrics
++ metadata), and `model.reference.json` (the drift reference).
+
+## Drift detection
+
+The self-monitoring layer scores a recent window against the reference captured
+at training time and raises `ok` / `warn` / `alert`:
+
+- **Input drift** — Population Stability Index (PSI) and a Kolmogorov-Smirnov
+  two-sample test on the demand distribution. PSI ≥ 0.1 warns, ≥ 0.25 alerts.
+  (Calendar features are intentionally not monitored: their distribution is
+  fixed by the window, not by real-world drift.)
+- **Prediction-error decay** — the model's recent error vs. the error it
+  achieved at training time. A ratio ≥ 1.5 warns, ≥ 2.0 alerts.
+
+Prove the flag fires — no API key needed:
+
+```bash
+driftwatch synth --days 45 && driftwatch train   # reference captured here
+driftwatch drift                                  # -> status: OK
+
+driftwatch synth --days 7 --shift 0.35            # inject a +35% level shift
+driftwatch drift --fail-on-alert                  # -> status: ALERT, exits 2
+```
+
+Every check is written to a `drift_reports` table (and surfaced at
+`GET /drift/history`) — the operational trail the Week 4 dashboard will render.
+`--fail-on-alert` makes the command exit non-zero, so a cron job or CI step can
+page on it.
 
 ## Docker
 
@@ -153,7 +190,7 @@ refreshed SQLite file as a build artifact. For real cross-run persistence, point
 ## Development
 
 ```bash
-make test    # pytest — ingestion, features/leakage, model skill, API endpoints
+make test    # pytest — ingestion, features/leakage, model skill, drift, API
 make lint    # ruff
 make fmt     # ruff format
 ```

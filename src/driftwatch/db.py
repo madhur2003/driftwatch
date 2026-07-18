@@ -46,6 +46,24 @@ CREATE TABLE IF NOT EXISTS ingestion_runs (
     status            TEXT NOT NULL,
     error             TEXT
 );
+
+CREATE TABLE IF NOT EXISTS drift_reports (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at_utc  TEXT NOT NULL,
+    respondent        TEXT NOT NULL,
+    data_type         TEXT NOT NULL,
+    current_start_utc TEXT,
+    current_end_utc   TEXT,
+    status            TEXT NOT NULL,
+    flagged           INTEGER NOT NULL DEFAULT 0,
+    value_psi         REAL,
+    ks_statistic      REAL,
+    ks_pvalue         REAL,
+    error_mae         REAL,
+    baseline_mae      REAL,
+    mae_ratio         REAL,
+    report_json       TEXT NOT NULL
+);
 """
 
 _UPSERT_SQL = """
@@ -195,5 +213,66 @@ def latest_period(conn: sqlite3.Connection, respondent: str, data_type: str = "D
 def recent_runs(conn: sqlite3.Connection, limit: int = 5) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM ingestion_runs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
+def insert_drift_report(
+    conn: sqlite3.Connection,
+    *,
+    respondent: str,
+    data_type: str,
+    generated_at_utc: str,
+    current_start: str | None,
+    current_end: str | None,
+    status: str,
+    flagged: bool,
+    value_psi: float | None,
+    ks_statistic: float | None,
+    ks_pvalue: float | None,
+    error_mae: float | None,
+    baseline_mae: float | None,
+    mae_ratio: float | None,
+    report_json: str,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO drift_reports
+            (generated_at_utc, respondent, data_type, current_start_utc, current_end_utc,
+             status, flagged, value_psi, ks_statistic, ks_pvalue,
+             error_mae, baseline_mae, mae_ratio, report_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            generated_at_utc,
+            respondent,
+            data_type,
+            current_start,
+            current_end,
+            status,
+            1 if flagged else 0,
+            value_psi,
+            ks_statistic,
+            ks_pvalue,
+            error_mae,
+            baseline_mae,
+            mae_ratio,
+            report_json,
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def recent_drift_reports(
+    conn: sqlite3.Connection, respondent: str | None = None, limit: int = 20
+) -> list[sqlite3.Row]:
+    if respondent:
+        return conn.execute(
+            "SELECT * FROM drift_reports WHERE respondent = ? ORDER BY id DESC LIMIT ?",
+            (respondent, limit),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM drift_reports ORDER BY id DESC LIMIT ?",
         (limit,),
     ).fetchall()
