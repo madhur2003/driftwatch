@@ -56,3 +56,8 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# dashboard.py embeds a self-contained HTML/CSS/JS page as a string literal;
+# long lines there are markup, not Python logic.
+"src/driftwatch/dashboard.py" = ["E501"]

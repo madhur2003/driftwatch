@@ -97,3 +97,33 @@ def test_drift_without_model_returns_503(tmp_path):
     with TestClient(create_app(settings)) as client:
         resp = client.post("/drift", json={"respondent": "PJM"})
         assert resp.status_code == 503
+
+
+def test_dashboard_page_is_served(trained_settings):
+    with TestClient(create_app(trained_settings)) as client:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert "Driftwatch" in resp.text
+        assert "/dashboard/data" in resp.text  # the page fetches the aggregate endpoint
+
+
+def test_dashboard_data_shape_with_model(trained_settings):
+    with TestClient(create_app(trained_settings)) as client:
+        data = client.get("/dashboard/data").json()
+        assert data["model"]["loaded"] is True
+        assert data["drift"]["status"] in ("ok", "warn", "alert")
+        assert len(data["series"]["forecast"]) == 24
+        assert len(data["series"]["history"]) > 0
+
+
+def test_dashboard_data_degrades_without_model(tmp_path):
+    settings = _settings(tmp_path, model_path=tmp_path / "missing.joblib")
+    with db.get_connection(settings.db_path) as conn:
+        db.upsert_records(conn, synthetic_records(hours=10 * 24, seed=5))
+    with TestClient(create_app(settings)) as client:
+        data = client.get("/dashboard/data").json()
+        assert data["model"]["loaded"] is False
+        assert data["drift"] is None
+        assert data["series"]["forecast"] == []
+        assert len(data["series"]["history"]) > 0

@@ -14,9 +14,11 @@ from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from . import __version__, db
+from . import dashboard as DASH
 from . import drift as D
 from . import features as F
 from . import model as M
@@ -140,9 +142,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    @app.get("/")
-    def root() -> dict:
-        return {"service": "driftwatch", "version": __version__, "docs": "/docs"}
+    @app.get("/", response_class=HTMLResponse)
+    def dashboard_page() -> HTMLResponse:
+        return HTMLResponse(DASH.DASHBOARD_HTML)
+
+    @app.get("/dashboard/data")
+    def dashboard_data(request: Request, respondent: str = "PJM", data_type: str = "D") -> dict:
+        return DASH.dashboard_data(
+            request.app.state.settings,
+            request.app.state.artifact,
+            respondent=respondent,
+            data_type=data_type,
+        )
 
     @app.get("/health", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:

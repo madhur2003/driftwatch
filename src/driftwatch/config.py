@@ -12,12 +12,11 @@ from dotenv import load_dotenv
 # is a no-op there.
 load_dotenv()
 
-# Package / project roots (src-layout: <root>/src/driftwatch/config.py).
-PACKAGE_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = PACKAGE_ROOT.parent.parent
-
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "driftwatch.db"
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "model.joblib"
+# Default store/model locations, relative to the current working directory — so
+# the same paths resolve whether Driftwatch runs from source or an installed
+# wheel. The container overrides both via environment variables.
+DEFAULT_DB_PATH = Path("data/driftwatch.db")
+DEFAULT_MODEL_PATH = Path("models/model.joblib")
 
 # EIA API v2 — hourly electricity demand by balancing authority, reported in UTC.
 # Docs: https://www.eia.gov/opendata/

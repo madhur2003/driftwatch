@@ -24,8 +24,9 @@ This is being built in weekly increments.
       behind FastAPI; containerize.
 - [x] **Week 3 — Drift layer.** PSI + KS on the demand distribution and
       prediction-error monitoring, with the threshold that raises the flag.
+- [x] **Week 4 — Dashboard.** A live monitoring page — the flag, model quality,
+      the forecast, and the drift-history timeline — served by the API itself.
       ← *you are here*
-- [ ] Week 4 — Monitoring dashboard: live predictions, recent error, drift status.
 - [ ] Week 5 — Deploy, then deliberately feed it shifted data to prove the flag fires.
 
 ## What's inside
@@ -40,7 +41,8 @@ src/driftwatch/
   synthetic.py    realistic offline demand generator (demos + tests)
   model.py        train / evaluate / persist / predict (gradient boosting)
   drift.py        PSI + KS distribution drift, prediction-error decay, flag
-  api.py          FastAPI service: /health, /model, /predict, /drift
+  dashboard.py    self-contained monitoring page + its aggregate data endpoint
+  api.py          FastAPI service: dashboard, /health, /model, /predict, /drift
   cli.py          ingest | status | init-db | synth | train | predict | serve | drift
 ```
 
@@ -132,6 +134,8 @@ curl -X POST localhost:8000/predict \
 
 | Endpoint             | Description                                              |
 | -------------------- | ------------------------------------------------------- |
+| `GET /`              | The monitoring dashboard (HTML)                          |
+| `GET /dashboard/data`| Aggregate JSON powering the dashboard                    |
 | `GET /health`        | Liveness + whether a model is loaded and when it trained |
 | `GET /model`         | Training metadata: metrics, baseline, features, window   |
 | `POST /predict`      | Forecast by `horizon_hours` (≤24) or explicit `periods`  |
@@ -165,9 +169,27 @@ driftwatch drift --fail-on-alert                  # -> status: ALERT, exits 2
 ```
 
 Every check is written to a `drift_reports` table (and surfaced at
-`GET /drift/history`) — the operational trail the Week 4 dashboard will render.
+`GET /drift/history`) — the operational trail the dashboard renders.
 `--fail-on-alert` makes the command exit non-zero, so a cron job or CI step can
 page on it.
+
+## Dashboard
+
+The service serves its own monitoring page at `/` — a single self-contained
+HTML page (no external assets) that polls `GET /dashboard/data` and shows:
+
+- the **drift flag** as a prominent `ok` / `warn` / `alert` banner;
+- stat tiles: model MAPE, skill vs. baseline, current PSI, recent-error ratio;
+- a **forecast chart** — the last 72h of actual demand and the next 24h predicted;
+- the **drift-history timeline** — every recorded check, newest first.
+
+```bash
+driftwatch synth --days 45 && driftwatch train   # give it data + a model
+driftwatch serve                                 # open http://127.0.0.1:8000
+```
+
+It auto-refreshes every 30s and is theme-aware (light/dark). Seed a shift
+(`driftwatch synth --days 7 --shift 0.35`) and watch the banner turn red.
 
 ## Docker
 

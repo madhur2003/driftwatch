@@ -28,5 +28,10 @@ data/*.db-shm
 models/*.joblib
 models/*.json
 
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
+
 # OS
 .DS_Store
