@@ -19,21 +19,26 @@ catch.
 This is being built in weekly increments.
 
 - [x] **Week 1 — Ingestion.** Pull the live EIA feed on a schedule and store it
-      cleanly and idempotently. ← *you are here*
-- [ ] Week 2 — Train a demand forecaster and serve it behind FastAPI; containerize.
+      cleanly and idempotently.
+- [x] **Week 2 — Forecast & serve.** Train a demand forecaster and serve it
+      behind FastAPI; containerize. ← *you are here*
 - [ ] Week 3 — Drift layer: PSI + KS tests on incoming features, plus error monitoring.
 - [ ] Week 4 — Monitoring dashboard: live predictions, recent error, drift status.
 - [ ] Week 5 — Deploy, then deliberately feed it shifted data to prove the flag fires.
 
-## What Week 1 delivers
+## What's inside
 
 ```
 src/driftwatch/
-  config.py       env-driven settings (API key, DB path, timeouts)
+  config.py       env-driven settings (API key, DB + model paths, timeouts)
   eia_client.py   typed EIA v2 client with pagination + retry/backoff
   db.py           SQLite store; idempotent upsert + ingestion run log
   ingest.py       orchestration: resolve window -> fetch -> upsert -> log run
-  cli.py          `driftwatch ingest | status | init-db`
+  features.py     calendar + lag features; one path for train and inference
+  synthetic.py    realistic offline demand generator (demos + tests)
+  model.py        train / evaluate / persist / predict (gradient boosting)
+  api.py          FastAPI service: /health, /model, /predict
+  cli.py          driftwatch ingest | status | init-db | synth | train | predict | serve
 ```
 
 Design choices worth noting:
@@ -47,6 +52,13 @@ Design choices worth noting:
   fail fast. Large windows are paged transparently.
 - **An operational trail.** Every run is recorded in `ingestion_runs` (window,
   rows written, status, error) — the raw material for the monitoring view later.
+- **No train/serve skew.** Training and inference build features through the
+  *same* `features.py` code path, and every feature reads only history older
+  than the target hour — so forecasts up to 24h ahead are leakage-free and the
+  API can build features for future hours from stored observations alone.
+- **Honest evaluation.** The model is scored on a time-ordered hold-out (never
+  a shuffled split) against a seasonal-naive "same hour yesterday" baseline, so
+  its reported skill is real.
 
 ## Quickstart
 
@@ -82,6 +94,55 @@ Track more balancing authorities (repeat the flag):
 driftwatch ingest --respondent PJM --respondent NYIS --lookback-hours 48
 ```
 
+## Forecast & serve
+
+The forecaster is a gradient-boosted regressor
+(scikit-learn `HistGradientBoostingRegressor`) over calendar features (cyclical
+hour / day-of-week / day-of-year, weekend flag) and demand lags (24h, 48h, 168h)
+plus the prior day's mean. The model is deliberately not the hard part — the
+point is a trained artifact served behind an API that reports its own quality.
+
+**Try the whole loop offline — no API key needed** (synthetic data stands in for
+a live feed):
+
+```bash
+driftwatch synth --days 60        # seed a realistic synthetic demand series
+driftwatch train                  # -> val MAE / RMSE / MAPE + skill vs baseline
+driftwatch predict --horizon 24   # next-24h forecast from the CLI
+driftwatch serve                  # FastAPI on http://127.0.0.1:8000  (docs at /docs)
+```
+
+Then hit the service:
+
+```bash
+curl localhost:8000/health
+curl localhost:8000/model                     # metrics + training window + features
+curl -X POST localhost:8000/predict \
+     -H 'content-type: application/json' \
+     -d '{"respondent":"PJM","horizon_hours":6}'
+```
+
+| Endpoint         | Description                                             |
+| ---------------- | ------------------------------------------------------- |
+| `GET /health`    | Liveness + whether a model is loaded and when it trained |
+| `GET /model`     | Training metadata: metrics, baseline, features, window   |
+| `POST /predict`  | Forecast by `horizon_hours` (≤24) or explicit `periods`  |
+
+Training persists two files next to each other: `model.joblib` (the estimator)
+and `model.json` (metrics + metadata), under `models/` by default
+(`DRIFTWATCH_MODEL_PATH`).
+
+## Docker
+
+```bash
+docker build -t driftwatch .
+docker run --rm -p 8000:8000 \
+  -v "$(pwd)/data:/app/data" -v "$(pwd)/models:/app/models" driftwatch
+```
+
+The image (Python 3.12 slim) serves the API with uvicorn; the SQLite store and
+the trained model are provided at run time via the mounted volumes.
+
 ## Scheduled ingestion
 
 [`.github/workflows/ingest.yml`](.github/workflows/ingest.yml) runs ingestion on
@@ -92,13 +153,14 @@ refreshed SQLite file as a build artifact. For real cross-run persistence, point
 ## Development
 
 ```bash
-make test    # pytest — client pagination/retry, idempotent upsert, run logging
+make test    # pytest — ingestion, features/leakage, model skill, API endpoints
 make lint    # ruff
 make fmt     # ruff format
 ```
 
 The test suite runs fully offline: the EIA client is exercised through a mocked
-HTTP transport, so no API key or network is needed to validate the plumbing.
+HTTP transport, the model trains on a synthetic series, and the API is driven via
+FastAPI's `TestClient` — so no API key or network is needed to validate anything.
 
 ### Environment note: editable installs on Python 3.14 + macOS
 

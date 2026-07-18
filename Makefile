@@ -1,4 +1,4 @@
-.PHONY: help install dev test lint fmt ingest status clean
+.PHONY: help install dev test lint fmt ingest status synth train predict serve docker-build docker-run clean
 PY ?= python3
 
 # Run the CLI straight from source: no install step, always reflects your edits,
@@ -7,7 +7,7 @@ RUN := PYTHONPATH=src $(PY) -m driftwatch
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
-		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}'
 
 install:  ## Install as a real package so the `driftwatch` command is on PATH
 	$(PY) -m pip install .
@@ -29,6 +29,25 @@ ingest:  ## Pull the last 72h of demand (needs EIA_API_KEY)
 
 status:  ## Show what has been ingested
 	$(RUN) status
+
+synth:  ## Seed 60 days of synthetic demand (offline demo, no API key)
+	$(RUN) synth --days 60
+
+train:  ## Train the forecaster on stored demand
+	$(RUN) train
+
+predict:  ## Forecast the next 24h
+	$(RUN) predict --horizon 24
+
+serve:  ## Run the FastAPI service on http://127.0.0.1:8000
+	$(RUN) serve
+
+docker-build:  ## Build the API container image
+	docker build -t driftwatch:dev .
+
+docker-run:  ## Run the container, mounting local data + models
+	docker run --rm -p 8000:8000 \
+		-v "$$(pwd)/data:/app/data" -v "$$(pwd)/models:/app/models" driftwatch:dev
 
 clean:  ## Remove caches and build artifacts
 	rm -rf .pytest_cache .ruff_cache build dist src/*.egg-info

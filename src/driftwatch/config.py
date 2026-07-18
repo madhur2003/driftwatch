@@ -17,6 +17,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent
 
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "driftwatch.db"
+DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "model.joblib"
 
 # EIA API v2 — hourly electricity demand by balancing authority, reported in UTC.
 # Docs: https://www.eia.gov/opendata/
@@ -39,13 +40,21 @@ class Settings:
     db_path: Path
     request_timeout: float
     max_retries: int
+    model_path: Path = DEFAULT_MODEL_PATH
+
+    @property
+    def meta_path(self) -> Path:
+        """Sidecar JSON path holding the trained model's metadata."""
+        return self.model_path.with_suffix(".json")
 
     @classmethod
     def from_env(cls) -> Settings:
         db_path = os.environ.get("DRIFTWATCH_DB_PATH")
+        model_path = os.environ.get("DRIFTWATCH_MODEL_PATH")
         return cls(
             eia_api_key=os.environ.get("EIA_API_KEY"),
             db_path=Path(db_path) if db_path else DEFAULT_DB_PATH,
             request_timeout=float(os.environ.get("DRIFTWATCH_HTTP_TIMEOUT", "30")),
             max_retries=int(os.environ.get("DRIFTWATCH_MAX_RETRIES", "4")),
+            model_path=Path(model_path) if model_path else DEFAULT_MODEL_PATH,
         )

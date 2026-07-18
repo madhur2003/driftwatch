@@ -162,6 +162,28 @@ def observation_count(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) FROM demand_observations").fetchone()[0])
 
 
+def select_observations(
+    conn: sqlite3.Connection,
+    respondent: str,
+    data_type: str = "D",
+    start: str | None = None,
+    end: str | None = None,
+) -> list[tuple[str, float | None]]:
+    """Return (period_utc, value) pairs ordered by time. ISO period strings sort chronologically."""
+    query = (
+        "SELECT period_utc, value FROM demand_observations WHERE respondent = ? AND data_type = ?"
+    )
+    params: list[object] = [respondent, data_type]
+    if start is not None:
+        query += " AND period_utc >= ?"
+        params.append(start)
+    if end is not None:
+        query += " AND period_utc <= ?"
+        params.append(end)
+    query += " ORDER BY period_utc"
+    return [(row[0], row[1]) for row in conn.execute(query, params).fetchall()]
+
+
 def latest_period(conn: sqlite3.Connection, respondent: str, data_type: str = "D") -> str | None:
     row = conn.execute(
         "SELECT MAX(period_utc) FROM demand_observations WHERE respondent = ? AND data_type = ?",

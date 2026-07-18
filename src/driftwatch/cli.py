@@ -71,6 +71,91 @@ def cmd_init_db(_args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def cmd_train(args: argparse.Namespace, settings: Settings) -> int:
+    # Heavy ML imports are deferred so `ingest`/`status` stay lightweight.
+    from . import features as ft
+    from . import model as ml
+
+    respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
+    data_type = (args.type or list(DEFAULT_DATA_TYPES))[0]
+    with db.get_connection(settings.db_path) as conn:
+        rows = db.select_observations(conn, respondent, data_type)
+    frame = ft.frame_from_observations(rows)
+    try:
+        artifact = ml.train(
+            frame,
+            respondent=respondent,
+            data_type=data_type,
+            val_fraction=args.val_fraction,
+        )
+    except ml.NotEnoughDataError as exc:
+        logger.error("%s", exc)
+        return 1
+    ml.save(artifact, settings.model_path, settings.meta_path)
+
+    meta = artifact.metadata
+    m = meta["metrics"]
+    print(
+        f"Trained {meta['model']} for {respondent} (train={meta['n_train']}, val={meta['n_val']})"
+    )
+    print(
+        f"  val MAE={m['mae']:,.1f}  RMSE={m['rmse']:,.1f}  MAPE={m['mape']}%  "
+        f"skill vs seasonal-naive baseline={m['skill_vs_baseline'] * 100:.1f}%"
+    )
+    print(f"  saved -> {settings.model_path}")
+    return 0
+
+
+def cmd_predict(args: argparse.Namespace, settings: Settings) -> int:
+    from fastapi import HTTPException
+
+    from . import model as ml
+    from .api import PredictRequest, _predict  # reuse the exact serving path
+
+    respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
+    data_type = (args.type or list(DEFAULT_DATA_TYPES))[0]
+    artifact = ml.try_load(settings.model_path, settings.meta_path)
+    if artifact is None:
+        logger.error("no trained model at %s; run `driftwatch train` first", settings.model_path)
+        return 1
+
+    req = PredictRequest(respondent=respondent, data_type=data_type, horizon_hours=args.horizon)
+    try:
+        resp = _predict(settings, artifact, req)
+    except HTTPException as exc:
+        logger.error("%s", exc.detail)
+        return 1
+
+    print(
+        f"Forecast for {resp.respondent} ({resp.data_type}) — model trained {resp.model_trained_at}"
+    )
+    for item in resp.predictions:
+        value = f"{item.predicted:,.0f} MWh" if item.predicted is not None else "(n/a)"
+        print(f"  {item.period.isoformat()}  {value}")
+    return 0
+
+
+def cmd_synth(args: argparse.Namespace, settings: Settings) -> int:
+    from .synthetic import synthetic_records
+
+    respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
+    records = synthetic_records(respondent=respondent, hours=args.days * 24, seed=args.seed)
+    with db.get_connection(settings.db_path) as conn:
+        written = db.upsert_records(conn, records)
+    print(
+        f"Seeded {written} synthetic hourly rows for {respondent} "
+        f"({args.days} days) into {settings.db_path}"
+    )
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace, _settings: Settings) -> int:
+    import uvicorn
+
+    uvicorn.run("driftwatch.api:app", host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="driftwatch",
@@ -118,6 +203,45 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init-db", help="Create the database schema.", parents=[common])
     p_init.set_defaults(func=cmd_init_db)
+
+    p_train = sub.add_parser("train", help="Train the demand forecaster.", parents=[common])
+    p_train.add_argument("--respondent", action="append", help="Balancing authority. Default: PJM.")
+    p_train.add_argument("--type", action="append", help="EIA data type. Default: D.")
+    p_train.add_argument(
+        "--val-fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of the most recent data held out for validation. Default: 0.2.",
+    )
+    p_train.set_defaults(func=cmd_train)
+
+    p_predict = sub.add_parser("predict", help="Forecast the next N hours.", parents=[common])
+    p_predict.add_argument(
+        "--respondent", action="append", help="Balancing authority. Default: PJM."
+    )
+    p_predict.add_argument("--type", action="append", help="EIA data type. Default: D.")
+    p_predict.add_argument(
+        "--horizon", type=int, default=24, help="Hours ahead to forecast (1-24). Default: 24."
+    )
+    p_predict.set_defaults(func=cmd_predict)
+
+    p_synth = sub.add_parser(
+        "synth",
+        help="Seed a synthetic demand series (offline demo / no API key needed).",
+        parents=[common],
+    )
+    p_synth.add_argument("--respondent", action="append", help="Balancing authority. Default: PJM.")
+    p_synth.add_argument(
+        "--days", type=int, default=60, help="Days of history to generate. Default: 60."
+    )
+    p_synth.add_argument("--seed", type=int, default=0, help="RNG seed. Default: 0.")
+    p_synth.set_defaults(func=cmd_synth)
+
+    p_serve = sub.add_parser("serve", help="Run the FastAPI service (uvicorn).", parents=[common])
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host. Default: 127.0.0.1.")
+    p_serve.add_argument("--port", type=int, default=8000, help="Bind port. Default: 8000.")
+    p_serve.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev).")
+    p_serve.set_defaults(func=cmd_serve)
 
     return parser
 

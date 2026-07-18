@@ -24,5 +24,9 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 
+# Trained model artifacts (keep the directory, ignore the artifacts)
+models/*.joblib
+models/*.json
+
 # OS
 .DS_Store
