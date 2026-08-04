@@ -1,6 +1,7 @@
 """Command-line entry point.
 
-Subcommands: `ingest | status | init-db | synth | train | predict | serve | drift`.
+Subcommands: `ingest | status | init-db | synth | train | predict | serve | drift |
+bootstrap`.
 """
 
 from __future__ import annotations
@@ -209,6 +210,42 @@ def cmd_drift(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def cmd_bootstrap(args: argparse.Namespace, settings: Settings) -> int:
+    """Provision a fresh deployment: seed demo data if sparse, then ensure a model."""
+    from . import features as ft
+    from . import model as ml
+    from .synthetic import synthetic_records
+
+    respondent = (args.respondent or list(DEFAULT_RESPONDENTS))[0]
+    data_type = (args.type or list(DEFAULT_DATA_TYPES))[0]
+
+    with db.get_connection(settings.db_path) as conn:
+        existing = db.observation_count(conn)
+        seeded = 0
+        if args.demo and existing < args.min_observations:
+            records = synthetic_records(respondent=respondent, hours=args.days * 24, seed=args.seed)
+            seeded = db.upsert_records(conn, records)
+        rows = db.select_observations(conn, respondent, data_type)
+
+    print(
+        f"bootstrap: {existing} existing observations"
+        + (f", seeded {seeded} synthetic rows" if seeded else "")
+    )
+
+    if args.retrain or not settings.model_path.exists():
+        frame = ft.frame_from_observations(rows)
+        try:
+            artifact = ml.train(frame, respondent=respondent, data_type=data_type)
+        except ml.NotEnoughDataError as exc:
+            logger.warning("bootstrap: skipping training — %s", exc)
+            return 0
+        ml.save(artifact, settings.model_path, settings.meta_path, settings.reference_path)
+        print(f"bootstrap: trained model -> {settings.model_path}")
+    else:
+        print(f"bootstrap: model already present at {settings.model_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="driftwatch",
@@ -322,6 +359,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exit with code 2 when the status is ALERT (for cron/CI alerting).",
     )
     p_drift.set_defaults(func=cmd_drift)
+
+    p_boot = sub.add_parser(
+        "bootstrap",
+        help="Provision a deployment: seed demo data and train a model if missing.",
+        parents=[common],
+    )
+    p_boot.add_argument("--respondent", action="append", help="Balancing authority. Default: PJM.")
+    p_boot.add_argument("--type", action="append", help="EIA data type. Default: D.")
+    p_boot.add_argument(
+        "--demo",
+        action="store_true",
+        help="Seed a synthetic series when the store is sparse (no API key needed).",
+    )
+    p_boot.add_argument(
+        "--days", type=int, default=45, help="Days of demo data to seed. Default: 45."
+    )
+    p_boot.add_argument("--seed", type=int, default=0, help="RNG seed for demo data. Default: 0.")
+    p_boot.add_argument(
+        "--min-observations",
+        type=int,
+        default=24 * 14,
+        help="Only seed demo data below this many observations. Default: 336.",
+    )
+    p_boot.add_argument("--retrain", action="store_true", help="Retrain even if a model exists.")
+    p_boot.set_defaults(func=cmd_bootstrap)
 
     return parser
 

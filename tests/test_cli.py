@@ -39,3 +39,25 @@ def test_ingest_without_api_key_exits_cleanly_and_logs_failure(tmp_path, monkeyp
 def test_status_on_empty_db_returns_zero(tmp_path, monkeypatch):
     monkeypatch.setenv("DRIFTWATCH_DB_PATH", str(tmp_path / "cli.db"))
     assert main(["status"]) == 0
+
+
+def test_bootstrap_seeds_and_trains(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRIFTWATCH_DB_PATH", str(tmp_path / "d.db"))
+    monkeypatch.setenv("DRIFTWATCH_MODEL_PATH", str(tmp_path / "m.joblib"))
+
+    assert main(["bootstrap", "--demo", "--days", "20"]) == 0
+    with db.get_connection(tmp_path / "d.db") as conn:
+        assert db.observation_count(conn) > 0
+    assert (tmp_path / "m.joblib").exists()
+    assert (tmp_path / "m.reference.json").exists()  # drift reference captured
+
+
+def test_bootstrap_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRIFTWATCH_DB_PATH", str(tmp_path / "d.db"))
+    monkeypatch.setenv("DRIFTWATCH_MODEL_PATH", str(tmp_path / "m.joblib"))
+
+    assert main(["bootstrap", "--demo", "--days", "20"]) == 0
+    mtime = (tmp_path / "m.joblib").stat().st_mtime_ns
+    # Second run: data present and model present -> no reseed, no retrain.
+    assert main(["bootstrap", "--demo", "--days", "20"]) == 0
+    assert (tmp_path / "m.joblib").stat().st_mtime_ns == mtime

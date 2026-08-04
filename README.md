@@ -16,7 +16,7 @@ catch.
 
 ## Status
 
-This is being built in weekly increments.
+Built in weekly increments — all five complete.
 
 - [x] **Week 1 — Ingestion.** Pull the live EIA feed on a schedule and store it
       cleanly and idempotently.
@@ -26,8 +26,9 @@ This is being built in weekly increments.
       prediction-error monitoring, with the threshold that raises the flag.
 - [x] **Week 4 — Dashboard.** A live monitoring page — the flag, model quality,
       the forecast, and the drift-history timeline — served by the API itself.
-      ← *you are here*
-- [ ] Week 5 — Deploy, then deliberately feed it shifted data to prove the flag fires.
+- [x] **Week 5 — Deploy & stress.** A self-bootstrapping container ([Docker →
+      any free tier](docs/DEPLOY.md)) and a reproducible experiment that feeds
+      the running service shifted data to [prove the flag fires](docs/drift-experiment.md).
 
 ## What's inside
 
@@ -158,7 +159,7 @@ at training time and raises `ok` / `warn` / `alert`:
 - **Prediction-error decay** — the model's recent error vs. the error it
   achieved at training time. A ratio ≥ 1.5 warns, ≥ 2.0 alerts.
 
-Prove the flag fires — no API key needed:
+Prove the flag fires — no API key needed (or run [`scripts/drift_demo.sh`](scripts/drift_demo.sh)):
 
 ```bash
 driftwatch synth --days 45 && driftwatch train   # reference captured here
@@ -167,6 +168,10 @@ driftwatch drift                                  # -> status: OK
 driftwatch synth --days 7 --shift 0.35            # inject a +35% level shift
 driftwatch drift --fail-on-alert                  # -> status: ALERT, exits 2
 ```
+
+That +35% shift takes PSI from 0.04 to ~9 and recent error to ~16× the training
+baseline — full numbers and interpretation in
+[docs/drift-experiment.md](docs/drift-experiment.md).
 
 Every check is written to a `drift_reports` table (and surfaced at
 `GET /drift/history`) — the operational trail the dashboard renders.
@@ -191,16 +196,28 @@ driftwatch serve                                 # open http://127.0.0.1:8000
 It auto-refreshes every 30s and is theme-aware (light/dark). Seed a shift
 (`driftwatch synth --days 7 --shift 0.35`) and watch the banner turn red.
 
-## Docker
+## Docker & deploy
+
+The image (Python 3.12 slim) serves the API + dashboard with uvicorn and binds
+to `$PORT`. With `DRIFTWATCH_BOOTSTRAP_DEMO=1` it self-provisions a synthetic
+dataset and trains a model on start, so a fresh container has a live dashboard
+with no volume or API key:
 
 ```bash
 docker build -t driftwatch .
+docker run --rm -p 8000:8000 -e DRIFTWATCH_BOOTSTRAP_DEMO=1 driftwatch
+# open http://localhost:8000
+```
+
+For real data, mount a populated store instead of bootstrapping:
+
+```bash
 docker run --rm -p 8000:8000 \
   -v "$(pwd)/data:/app/data" -v "$(pwd)/models:/app/models" driftwatch
 ```
 
-The image (Python 3.12 slim) serves the API with uvicorn; the SQLite store and
-the trained model are provided at run time via the mounted volumes.
+Free-tier deploy (Render blueprint, Fly.io, Hugging Face Spaces) is documented in
+[docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Scheduled ingestion
 

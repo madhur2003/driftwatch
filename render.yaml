@@ -1,0 +1,20 @@
+# Render blueprint — deploy Driftwatch as a Docker web service on the free tier.
+# One-time: push this repo to GitHub, then in Render pick New > Blueprint > this repo.
+# Render injects $PORT (the entrypoint binds to it) and runs /health as the check.
+services:
+  - type: web
+    name: driftwatch
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Self-provision a synthetic demo dataset + model on cold start, so the
+      # dashboard is live immediately without any API key or mounted volume.
+      - key: DRIFTWATCH_BOOTSTRAP_DEMO
+        value: "1"
+      - key: DRIFTWATCH_DB_PATH
+        value: /app/data/driftwatch.db
+      - key: DRIFTWATCH_MODEL_PATH
+        value: /app/models/model.joblib
