@@ -11,7 +11,11 @@ health checks.
 
 ## Render (recommended)
 
-[`render.yaml`](../render.yaml) is a ready blueprint.
+One click (reads [`render.yaml`](../render.yaml); you'll sign in and approve):
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/madhur2003/driftwatch)
+
+Or manually — [`render.yaml`](../render.yaml) is a ready blueprint.
 
 1. Push this repo to GitHub.
 2. In Render: **New → Blueprint**, pick the repo. It reads `render.yaml`,

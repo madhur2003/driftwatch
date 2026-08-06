@@ -2,6 +2,10 @@
 
 **A self-monitoring prediction service that flags its own decay.**
 
+**[Live showcase page](https://madhur2003.github.io/driftwatch/)** — or deploy the live service (dashboard + API) in one click:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/madhur2003/driftwatch)
+
 Most "ML app" projects stop at serving predictions. Driftwatch forecasts
 regional electricity demand *and* watches its own inputs and errors, so it can
 say when it is becoming untrustworthy instead of quietly rotting. The point
