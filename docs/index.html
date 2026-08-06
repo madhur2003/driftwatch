@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driftwatch — a self-monitoring forecasting service</title>
+<meta name="description" content="Driftwatch forecasts regional electricity demand and monitors its own inputs and error, raising a flag when it becomes untrustworthy. A 5-week MLOps portfolio project.">
+<style>
+  :root{
+    --bg:#f5f7fa; --panel:#ffffff; --ink:#111722; --muted:#5c6675; --faint:#8a94a3;
+    --line:#e6e9ef; --accent:#4f46e5; --accent2:#7c3aed;
+    --ok:#16a34a; --warn:#d97706; --alert:#dc2626;
+    --ok-bg:#dcfce7; --alert-bg:#fee2e2;
+    --shadow:0 1px 2px rgba(16,23,34,.04),0 8px 24px rgba(16,23,34,.06);
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 22px}
+  section{padding:56px 0;border-top:1px solid var(--line)}
+  h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 6px}
+  h3{font-size:26px;line-height:1.25;margin:0 0 14px;letter-spacing:-.01em}
+  p.lead{color:var(--muted);font-size:17px;max-width:70ch;margin:0 0 8px}
+  .muted{color:var(--muted)}
+
+  /* Hero */
+  .hero{background:radial-gradient(120% 140% at 15% 0%,#1e2140 0%,#0f1226 55%,#0b0e1f 100%);
+    color:#e9ecf5;padding:64px 0 72px;border-top:none}
+  .hero .wrap{position:relative}
+  .eyebrow{font:600 12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:#a7b0ff}
+  .hero h1{font-size:52px;line-height:1.02;margin:16px 0 8px;letter-spacing:-.02em;font-weight:800}
+  .hero .tag{font-size:21px;color:#c7cce0;max-width:60ch;margin:0 0 10px;font-weight:500}
+  .hero .blurb{color:#9aa3bd;max-width:64ch;margin:0 0 26px}
+  .cta{display:flex;gap:12px;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:10px;padding:11px 18px;
+    font-weight:600;font-size:15px;border:1px solid transparent;cursor:pointer}
+  .btn.primary{background:#6366f1;color:#fff}
+  .btn.primary:hover{background:#5457e5;text-decoration:none}
+  .btn.ghost{background:rgba(255,255,255,.06);color:#e9ecf5;border-color:rgba(255,255,255,.16)}
+  .btn.ghost:hover{background:rgba(255,255,255,.12);text-decoration:none}
+  .flagchip{position:absolute;top:6px;right:0;display:none}
+  @media(min-width:820px){.flagchip{display:block}}
+  .flagchip .card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);
+    border-radius:14px;padding:14px 16px;width:230px;backdrop-filter:blur(4px)}
+  .flagchip .row{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#aab2cc}
+  .flagchip .big{font:800 15px/1 var(--mono);letter-spacing:.08em;margin-top:8px;display:flex;align-items:center;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .dot.red{background:#f87171;box-shadow:0 0 0 4px rgba(248,113,113,.18)}
+
+  /* Stat band */
+  .stats{background:var(--panel);border-top:none}
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+    background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .stat{background:var(--panel);padding:22px 20px}
+  .stat .n{font-size:30px;font-weight:800;letter-spacing:-.02em}
+  .stat .n small{font-size:16px;font-weight:700;color:var(--muted)}
+  .stat .l{font-size:13px;color:var(--muted);margin-top:2px}
+  .stat .n.grn{color:var(--ok)} .stat .n.red{color:var(--alert)}
+
+  /* Generic cards */
+  .cards{display:grid;gap:16px}
+  .grid2{grid-template-columns:1fr 1fr}
+  .grid3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:var(--shadow)}
+  .card h4{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:14.5px}
+  .kicker{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:.06em}
+
+  /* Pipeline */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;margin-top:8px}
+  .stage{flex:1 1 130px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;position:relative;min-width:120px}
+  .stage .t{font-weight:700;font-size:14px}
+  .stage .d{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .stage.mon{border-color:#c7b3ff;background:linear-gradient(180deg,#faf7ff,#f4efff)}
+  .arrow{align-self:center;color:var(--faint);font-size:20px;line-height:1}
+  @media(max-width:760px){.arrow{transform:rotate(90deg)}}
+
+  /* Experiment */
+  .exp{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.exp{grid-template-columns:1fr}}
+  .panel{border-radius:14px;padding:20px;border:1px solid var(--line)}
+  .panel.ok{background:linear-gradient(180deg,#f3fdf6,#eafaf0);border-color:#bfe9cc}
+  .panel.al{background:linear-gradient(180deg,#fff5f5,#ffecec);border-color:#f4c6c6}
+  .status{display:inline-flex;align-items:center;gap:8px;font-weight:800;font-size:13px;
+    letter-spacing:.12em;text-transform:uppercase;padding:5px 12px;border-radius:999px}
+  .status.ok{background:var(--ok-bg);color:var(--ok)} .status.al{background:var(--alert-bg);color:var(--alert)}
+  .panel h4{margin:12px 0 12px;font-size:15px;color:var(--ink)}
+  .metric{display:flex;justify-content:space-between;border-top:1px dashed var(--line);padding:8px 0;font-size:14.5px}
+  .metric:first-of-type{border-top:none}
+  .metric b{font:700 14.5px/1.4 var(--mono)}
+  .metric .g{color:var(--ok)} .metric .r{color:var(--alert)}
+  figure{margin:22px 0 0}
+  figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+
+  /* Timeline */
+  .tl{display:grid;gap:0}
+  .step{display:grid;grid-template-columns:82px 1fr;gap:18px;padding:16px 0;border-top:1px solid var(--line)}
+  .step:first-child{border-top:none}
+  .step .wk{font:700 13px/1 var(--mono);color:var(--accent);padding-top:3px}
+  .step .h{font-weight:700;margin:0 0 3px}
+  .step .b{color:var(--muted);font-size:14.5px;margin:0}
+
+  /* Stack chips */
+  .chips{display:flex;flex-wrap:wrap;gap:9px}
+  .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:7px 14px;
+    font-size:13.5px;font-weight:600;color:#374151}
+  .chip span{color:var(--faint);font-weight:500}
+
+  footer{background:#0b0e1f;color:#9aa3bd;padding:34px 0;border-top:none;font-size:14px}
+  footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  footer a{color:#c7cce0}
+  .note{font-size:12.5px;color:var(--faint);margin-top:14px}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <div class="flagchip">
+      <div class="card">
+        <div class="row"><span>drift monitor</span><span>PJM · demand</span></div>
+        <div class="big"><span class="dot red"></span>ALERT</div>
+        <div class="row" style="margin-top:8px"><span>PSI</span><span style="color:#f0a">9.07</span></div>
+        <div class="row"><span>error vs baseline</span><span style="color:#f0a">15.9×</span></div>
+      </div>
+    </div>
+    <div class="eyebrow">Portfolio project · MLOps</div>
+    <h1>Driftwatch</h1>
+    <p class="tag">A self-monitoring electricity-demand forecasting service that flags its own decay.</p>
+    <p class="blurb">Most ML apps stop at serving a prediction. The dangerous failure in production isn't a
+      crash — it's a model that keeps returning confident, wrong answers after the world shifts underneath it.
+      Driftwatch forecasts regional grid demand <em>and</em> watches its own inputs and error, so it can say
+      when it has become untrustworthy instead of failing silently.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/madhur2003/driftwatch">View on GitHub →</a>
+      <a class="btn ghost" href="#experiment">See the flag fire</a>
+      <a class="btn ghost" href="#build">How it was built</a>
+    </div>
+  </div>
+</header>
+
+<!-- STATS -->
+<section class="stats">
+  <div class="wrap">
+    <div class="statgrid">
+      <div class="stat"><div class="n">≈2.0<small>%</small></div><div class="l">forecast error (MAPE)</div></div>
+      <div class="stat"><div class="n grn">60.7<small>%</small></div><div class="l">better than a seasonal-naive baseline</div></div>
+      <div class="stat"><div class="n red">9.07</div><div class="l">drift PSI caught (alert ≥ 0.25)</div></div>
+      <div class="stat"><div class="n red">16×</div><div class="l">error spike detected</div></div>
+      <div class="stat"><div class="n">50</div><div class="l">passing tests · 0 lint errors</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT -->
+<section id="what">
+  <div class="wrap">
+    <h2>What it is</h2>
+    <h3>A forecasting service that knows when it's wrong</h3>
+    <p class="lead">Driftwatch pulls hourly electricity demand for a US balancing authority (PJM), forecasts the
+      next 24 hours with a gradient-boosted model, and serves it behind an API with a live dashboard. The
+      differentiator is the layer on top: it continuously compares incoming demand and its own prediction error
+      against what it saw at training time, and raises a graded flag — <b>ok / warn / alert</b> — the moment it
+      starts to drift.</p>
+    <div class="cards grid3" style="margin-top:22px">
+      <div class="card"><div class="kicker">forecast</div><h4>Gradient boosting</h4>
+        <p>scikit-learn on calendar + demand-lag features. Scored on a time-ordered hold-out against a
+          "same hour yesterday" baseline — so the reported skill is real, not leaked.</p></div>
+      <div class="card"><div class="kicker">serve</div><h4>FastAPI + Docker</h4>
+        <p>Typed endpoints for health, model metadata, and forecasts. One container, self-bootstrapping,
+          deployable to any free tier in a click.</p></div>
+      <div class="card"><div class="kicker">monitor</div><h4>The drift layer</h4>
+        <p>PSI + Kolmogorov–Smirnov on the demand distribution, plus prediction-error tracking. Thresholds
+          turn silent decay into a visible, paging signal.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <h3>One pipeline, from raw feed to a red banner</h3>
+    <p class="lead">Data flows left to right; the monitoring layer branches off the model to compare live
+      windows against the training reference.</p>
+    <div class="flow" style="margin-top:18px">
+      <div class="stage"><div class="t">EIA API</div><div class="d">hourly demand feed</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="t">Ingest</div><div class="d">paginated, retried, idempotent</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="t">SQLite</div><div class="d">observations + run log</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="t">Features</div><div class="d">calendar + lags, leakage-safe</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="t">Model</div><div class="d">gradient boosting</div></div>
+    </div>
+    <div class="flow" style="margin-top:10px">
+      <div class="stage"><div class="t">FastAPI</div><div class="d">/health · /model · /predict</div></div>
+      <div class="arrow">→</div>
+      <div class="stage mon"><div class="t">Drift layer</div><div class="d">PSI · KS · error ratio</div></div>
+      <div class="arrow">→</div>
+      <div class="stage mon"><div class="t">Flag + reports</div><div class="d">ok / warn / alert, stored</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="t">Dashboard</div><div class="d">served by the API itself</div></div>
+    </div>
+    <p class="note">Training also snapshots a <em>reference</em> — the demand distribution the model learned on —
+      so every later window has something honest to be compared against.</p>
+  </div>
+</section>
+
+<!-- EXPERIMENT -->
+<section id="experiment">
+  <div class="wrap">
+    <h2>Proof</h2>
+    <h3>We fed the running system shifted data. The flag fired.</h3>
+    <p class="lead">The whole point, tested end to end: train on 45 stable days, then inject a <b>+35% demand
+      level shift</b> into the most recent week — a heat-wave-scale jump to a level the model never trained on.
+      Both independent detectors caught it and the banner flipped from green to red.</p>
+
+    <div class="exp" style="margin-top:22px">
+      <div class="panel ok">
+        <span class="status ok"><span class="dot" style="background:var(--ok)"></span>OK · stable window</span>
+        <h4>Inputs and error look like training</h4>
+        <div class="metric"><span>Input drift — PSI</span><b class="g">0.04</b></div>
+        <div class="metric"><span>KS test (p-value)</span><b class="g">0.08 (p=0.40)</b></div>
+        <div class="metric"><span>Recent error vs baseline</span><b class="g">1.01×</b></div>
+      </div>
+      <div class="panel al">
+        <span class="status al"><span class="dot" style="background:var(--alert)"></span>Alert · +35% shift</span>
+        <h4>Distribution moved; the model can't keep up</h4>
+        <div class="metric"><span>Input drift — PSI</span><b class="r">9.07</b></div>
+        <div class="metric"><span>KS test (p-value)</span><b class="r">0.81 (p≈0)</b></div>
+        <div class="metric"><span>Recent error vs baseline</span><b class="r">15.9×</b></div>
+      </div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 900 150" width="100%" role="img" aria-label="PSI comparison bar chart">
+        <!-- scale 0..0.5 with a breakout for the alert value -->
+        <line x1="60" y1="120" x2="840" y2="120" stroke="#e6e9ef"/>
+        <!-- alert threshold at 0.25 -> x = 60 + (0.25/0.5)*(700) = 410 -->
+        <line x1="410" y1="30" x2="410" y2="128" stroke="#dc2626" stroke-dasharray="4 4" stroke-width="1.5"/>
+        <text x="416" y="42" font-size="12" fill="#dc2626" font-weight="700">alert ≥ 0.25</text>
+        <!-- stable bar (0.037) -->
+        <rect x="60" y="54" width="52" height="20" rx="4" fill="#16a34a"/>
+        <text x="120" y="69" font-size="12.5" fill="#374151">stable · PSI 0.04</text>
+        <!-- drift bar: clamped to full width, breakout label -->
+        <rect x="60" y="90" width="780" height="20" rx="4" fill="#dc2626"/>
+        <text x="60" y="105.5" font-size="12.5" fill="#fff" font-weight="700" dx="8">drift · PSI 9.07</text>
+        <text x="832" y="105.5" font-size="12.5" fill="#fff" text-anchor="end" font-weight="700">36× past the line →</text>
+      </svg>
+      <figcaption>Population Stability Index, stable vs. shifted. <code>driftwatch drift --fail-on-alert</code>
+        exits non-zero on alert, so a scheduled job pages instead of the model failing quietly.
+        Reproduce it in ~1 min with <code>scripts/drift_demo.sh</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- BUILD -->
+<section id="build">
+  <div class="wrap">
+    <h2>How it was built</h2>
+    <h3>Five weekly increments, shipped and verified</h3>
+    <p class="lead">Each week is a self-contained commit that leaves the system runnable — plumbing first,
+      model second, the monitoring differentiator third, then the human view, then deploy and stress.</p>
+    <div class="tl" style="margin-top:14px">
+      <div class="step"><div class="wk">Week 1</div><div>
+        <p class="h">Ingestion</p>
+        <p class="b">A typed EIA API client with pagination and retry/backoff, into an idempotent SQLite store
+          keyed on (respondent, type, hour) with a run log. Scheduled via GitHub Actions.</p></div></div>
+      <div class="step"><div class="wk">Week 2</div><div>
+        <p class="h">Forecast &amp; serve</p>
+        <p class="b">A gradient-boosted forecaster on calendar + lag features, scored honestly against a
+          seasonal-naive baseline, served behind FastAPI and containerized.</p></div></div>
+      <div class="step"><div class="wk">Week 3</div><div>
+        <p class="h">The drift layer</p>
+        <p class="b">PSI and KS on the demand distribution plus prediction-error monitoring, against a reference
+          captured at training time — with the thresholds that raise the flag.</p></div></div>
+      <div class="step"><div class="wk">Week 4</div><div>
+        <p class="h">Dashboard</p>
+        <p class="b">A live monitoring page — the flag, model quality, the forecast, and the drift-history
+          timeline — served by the API itself, no second process.</p></div></div>
+      <div class="step"><div class="wk">Week 5</div><div>
+        <p class="h">Deploy &amp; stress</p>
+        <p class="b">A self-bootstrapping container that runs on any free tier, and the reproducible experiment
+          above that proves the flag fires under a deliberate shift.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- DECISIONS -->
+<section id="decisions">
+  <div class="wrap">
+    <h2>Engineering decisions</h2>
+    <h3>The choices that signal "operates a system"</h3>
+    <div class="cards grid2" style="margin-top:20px">
+      <div class="card"><h4>No train/serve skew</h4><p>Training and inference build features through the same
+        code path, and every feature reads only history older than the target hour — forecasts up to 24h ahead
+        are leakage-free by construction.</p></div>
+      <div class="card"><h4>Honest evaluation</h4><p>Scored on a time-ordered hold-out (never a shuffled split)
+        against a seasonal-naive baseline, so the reported ~61% skill is a real improvement, not an artifact.</p></div>
+      <div class="card"><h4>Idempotent by design</h4><p>Ingestion upserts on a natural key, so overlapping
+        scheduled runs never duplicate rows; the deploy bootstrap only seeds and trains when the store is empty.</p></div>
+      <div class="card"><h4>Meaningful drift, not noise</h4><p>PSI tracks demand level, not calendar features —
+        whose distribution is fixed by the window, not by drift — so alerts are signal, not false alarms.</p></div>
+    </div>
+
+    <h2 style="margin-top:44px">Stack</h2>
+    <div class="chips" style="margin-top:10px">
+      <span class="chip">Python <span>3.11+</span></span>
+      <span class="chip">FastAPI <span>+ uvicorn</span></span>
+      <span class="chip">scikit-learn <span>HistGBR</span></span>
+      <span class="chip">pandas <span>+ numpy</span></span>
+      <span class="chip">SciPy <span>KS test</span></span>
+      <span class="chip">SQLite</span>
+      <span class="chip">Docker</span>
+      <span class="chip">GitHub Actions <span>cron</span></span>
+      <span class="chip">pytest <span>· 50 tests</span></span>
+      <span class="chip">ruff</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <strong style="color:#e9ecf5">Driftwatch</strong> — a self-monitoring forecasting service.<br>
+      Built by Madhur · 2026
+    </div>
+    <div>
+      <a href="https://github.com/madhur2003/driftwatch">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/madhur2003/driftwatch/blob/main/docs/drift-experiment.md">Drift experiment</a> &nbsp;·&nbsp;
+      <a href="https://github.com/madhur2003/driftwatch/blob/main/docs/DEPLOY.md">Deploy</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
